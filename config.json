@@ -1,0 +1,16 @@
+{
+  "hearthstone_logs_dir": "G:\\Hearthstone\\Logs",
+  "ollama_url": "http://localhost:11434",
+  "model": "qwen3:8b",
+  "player_name": "auto",
+  "language": "ru",
+  "auto_advice": true,
+  "tavern_upgrade_costs": {"2": 4, "3": 5, "4": 7, "5": 8, "6": 9},
+  "hydrate_mb": 0,
+  "advice_on": ["shop_refresh", "recruit_start"],
+  "overlay": {
+    "opacity": 0.93,
+    "width": 400,
+    "always_on_top": true
+  }
+}

@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+
+# скачанные иконки карт (каша накапливается сама при работе)
+art/
+
+# разовые артефакты отладки
+_shot.png
+_overlay_test.png
+_screenshot_small.jpg

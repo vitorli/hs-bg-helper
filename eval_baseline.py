@@ -43,7 +43,13 @@ def eval_question(rows: list[dict], question: str, cv: int) -> None:
         for q in r.get("questions", []):
             if q.get("question") == question and q.get("answer"):
                 X.append(r["text"])
-                y.append(q["answer"])
+                ans = q["answer"]
+                if question == "Что купить?":
+                    # метка «покупать/не покупать» — осмысленная для любого магазина;
+                    # выбор конкретного слота зависит от конкретных карт и по
+                    # char-TFIDF не обобщается (сотни классов)
+                    ans = "покупка" if ans != "ничего" else "ничего"
+                y.append(ans)
     if len(set(y)) < 2:
         print(f"{question}: пропуск — один класс ({len(y)} ответов)")
         return

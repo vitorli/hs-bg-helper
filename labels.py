@@ -89,14 +89,18 @@ def extract_labels(rec: dict) -> dict | None:
         pass
     buy_slot = min(slots) if len(slots) == 1 else (0 if not slots else None)
 
-    # --- ап таверны
+    # --- ап таверны: «ап на следующий ход» — это НЕ ап сейчас, метку не ставим
     up_re = re.compile(r"\bап\b|апнуть|апгрейд|повысить\s+таверн|поднять\s+таверн")
+    future_re = re.compile(r"ап\w*\D{0,15}(на\s+след|потом|позже|на\s+будущ|через\s+ход)")
     upgrade = None
-    if tier < 6:
-        upgrade = bool(up_re.search(low))
-        # ап «на следующий ход» — не ап прямо сейчас
-        if upgrade and re.search(r"ап\w*\D{0,15}(на\s+след|потом|позже|на\s+будущ)", low):
+    if tier < 6 and up_re.search(low):
+        if future_re.search(low) and not re.search(
+                r"ап\w*\s+(сейчас|немедленно|сразу)|сейчас\s+ап", low):
+            upgrade = None   # ап отложен — для текущего решения не метка
+        elif re.search(r"не\s+ап|без\s+ап", low):
             upgrade = False
+        else:
+            upgrade = True
 
     # --- реролл остатка (не «не рероллить»)
     reroll = None

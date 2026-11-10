@@ -115,11 +115,16 @@ def encode_questions(snap: dict, labels: dict | None = None) -> list[dict]:
     buy_options = ["ничего"] + [
         f"слот {i} — {(m.get('name') or m.get('card_id'))}" for i, m in enumerate(shop, 1)]
     questions = [
-        {"question": "Что купить?", "options": buy_options},
-        {"question": "Апнуть таверну?", "options": ["нет", "да"]},
-        {"question": "Рероллить остаток золота?", "options": ["нет", "да"]},
-        {"question": "Заморозить магазин?", "options": ["нет", "да"]},
-        {"question": "Цель сборки?", "options": ["держать текущую"] + COMP_TARGETS},
+        {"question": "Что купить?", "options": buy_options,
+         "instructions": "Какой слот магазина купить прямо сейчас? «ничего» = не покупать."},
+        {"question": "Апнуть таверну?", "options": ["нет", "да"],
+         "instructions": "Апнуть тир таверны на этом ходу?"},
+        {"question": "Рероллить остаток золота?", "options": ["нет", "да"],
+         "instructions": "Потратить оставшееся золото на реролл магазина?"},
+        {"question": "Заморозить магазин?", "options": ["нет", "да"],
+         "instructions": "Заморозить текущий магазин на следующий ход?"},
+        {"question": "Цель сборки?", "options": ["держать текущую"] + COMP_TARGETS,
+         "instructions": "Какое племя/направление сборки приоритетно?"},
     ]
     if labels:
         answers = {}
@@ -137,6 +142,18 @@ def encode_questions(snap: dict, labels: dict | None = None) -> list[dict]:
         for q in questions:
             q["answer"] = answers.get(q["question"])
     return questions
+
+
+def laya_questions(questions: list[dict]) -> dict:
+    """Наш формат -> схема вопросов Laya (dict с type/instructions/criteria)."""
+    return {
+        q["question"]: {
+            "type": "choice",
+            "instructions": q["instructions"],
+            "criteria": {opt: "" for opt in q["options"]},
+        }
+        for q in questions
+    }
 
 
 def main() -> int:

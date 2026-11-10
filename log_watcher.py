@@ -351,14 +351,25 @@ class GameState:
 
         def _valid_hero(ent) -> bool:
             return (ent is not None and ent.card_id not in BARTENDER_IDS
-                    and ent.zone == "PLAY"
-                    and (not self.local_pid or ent.controller == self.local_pid))
+                    and ent.zone == "PLAY")
 
         hero = None
         hero_eid = _to_int(tags.get("HERO_ENTITY"))
         cand = self.entities.get(hero_eid)
+        # Ссылка HERO_ENTITY со сущности игрока — самый надёжный источник:
+        # в дуосах герой локального игрока сидит под контроллером слота
+        # таверны (проверено на реальном логе), поэтому контроллер тут
+        # НЕ проверяем — игра сама говорит, чей это герой.
         if _valid_hero(cand):
             hero = cand
+        # fallback: если HERO_ENTITY нет/невалиден — ищем героя по контроллеру
+        if hero is None:
+            for ent in self.entities.values():
+                if (ent.get("CARDTYPE") in HERO_CARDTYPES and ent.zone == "PLAY"
+                        and ent.card_id not in BARTENDER_IDS
+                        and (not self.local_pid or ent.controller == self.local_pid)):
+                    hero = ent
+                    break
 
         shop, board, hand = [], [], []
         for ent in self.entities.values():
@@ -384,8 +395,9 @@ class GameState:
                             # магазина в фазе закупки — наша доска.
                             board.append(ent)
                 elif ct in HERO_CARDTYPES and hero is None:
-                    # бармен и плейсхолдеры — не наш герой
-                    if not _valid_hero(ent):
+                    # бармен, плейсхолдеры и чужие герои — не наш герой
+                    if (ent.card_id in BARTENDER_IDS
+                            or (self.local_pid and ent.controller != self.local_pid)):
                         continue
                     hero = ent
             elif (ent.zone == "HAND" and ent.card_id

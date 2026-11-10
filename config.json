@@ -8,7 +8,7 @@
   "history_turns": 4,
   "dataset_log": true,
   "fast_mode": true,
-  "clf_threshold": 0.6,
+  "clf_threshold": 0.7,
   "clf_path": "checkpoints/bg_clf",
   "tavern_upgrade_costs": {"2": 4, "3": 5, "4": 7, "5": 8, "6": 9},
   "hydrate_mb": 0,

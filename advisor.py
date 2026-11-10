@@ -69,6 +69,9 @@ SYSTEM_PROMPT_RU = (
     "показал доску противника заметно больше твоей по статам — сдвигай приоритет к немедленной силе "
     "доски вместо долгосрочных планов и апов; если ты сильнее — смелее апай и вкладывайся в скейлинг. "
     "Не выдумывай карты, которых нет в состоянии или справке. Если данных мало — скажи об этом честно. "
+    "ИСТОРИЯ МАТЧА (если дана): сверяй с ней свои прошлые советы — если две одинаковые карты уже на доске "
+    "или покупались раньше, третий экземпляр (триплет) — высший приоритет; если план не меняется несколько "
+    "ходов — не предлагай резких разворотов без причины. "
     "ФОРМАТ ОТВЕТА — ЖЁСТКО: ровно четыре пункта, каждый одной строкой:\n"
     "1) КУПИТЬ: ...\n2) СБОРКА: ...\n3) ПОЧЕМУ: ...\n4) ДАЛЬШЕ: ...\n"
     "ЗАПРЕЩЕНО: markdown (** или ##), эмодзи, заголовки, списки внутри пунктов, "
@@ -116,7 +119,7 @@ def _fmt_minion(m: dict, card_db: dict | None = None,
     return " ".join(parts)
 
 
-def build_prompt(snapshot: dict, db: dict) -> str:
+def build_prompt(snapshot: dict, db: dict, history: str | None = None) -> str:
     ref = []
     notes = db.get("meta_notes_ru", [])
     if notes:
@@ -229,6 +232,9 @@ def build_prompt(snapshot: dict, db: dict) -> str:
         for i, m in enumerate(hand, 1):
             lines.append(f"  {i}. {_fmt_minion(m)}")
 
+    if history:
+        lines.append(history)
+
     lines.append("\nДай совет по текущей фазе. Строго четыре пункта: КУПИТЬ / СБОРКА / ПОЧЕМУ / ДАЛЬШЕ, "
                  "каждый одной строкой, без markdown и вводных слов.")
     return "\n".join(lines)
@@ -250,9 +256,12 @@ class OllamaAdvisor:
         except requests.RequestException:
             return False
 
-    def advise(self, snapshot: dict, db: dict) -> str:
-        prompt = build_prompt(snapshot, db)
-        text = self._generate(prompt)
+    def advise(self, snapshot: dict, db: dict, history: str | None = None,
+               on_token=None) -> str:
+        prompt = build_prompt(snapshot, db, history)
+        # первую генерацию стримим по токенам в оверлей; повторные (исправление
+        # ошибок) — без стрима, чтобы не мигало
+        text = self._generate(prompt, on_token=on_token)
 
         # валидация ответа: ловим жёсткие ошибки и просим модель исправиться
         errors = []
@@ -300,16 +309,34 @@ class OllamaAdvisor:
 
     # ---------- генерация и валидация ----------
 
-    def _generate(self, prompt: str) -> str:
+    def _generate(self, prompt: str, on_token=None) -> str:
         payload = {
             "model": self.model,
             "system": self.system_prompt,
             "prompt": prompt,
-            "stream": False,
+            "stream": bool(on_token),
             # отключить thinking-режим у моделей типа qwen3 — нам нужен быстрый ответ
             "think": False,
             "options": {"temperature": 0.2, "num_ctx": 4096},
         }
+        if on_token:
+            chunks = []
+            with requests.post(f"{self.url}/api/generate", json=payload,
+                               timeout=self.timeout, stream=True) as r:
+                r.raise_for_status()
+                for raw in r.iter_lines(decode_unicode=True):
+                    if not raw:
+                        continue
+                    try:
+                        chunk = json.loads(raw)
+                    except ValueError:
+                        continue
+                    tok = chunk.get("response", "")
+                    if tok:
+                        chunks.append(tok)
+                        on_token(tok)
+            return "".join(chunks).strip()
+        payload["stream"] = False
         r = requests.post(f"{self.url}/api/generate", json=payload, timeout=self.timeout)
         r.raise_for_status()
         return r.json().get("response", "").strip()

@@ -8,7 +8,7 @@ overlay.py — полупрозрачное окно-оверлей поверх
 import re
 
 from PySide6.QtCore import Qt, QPoint, Signal, QObject
-from PySide6.QtGui import QFont, QPixmap
+from PySide6.QtGui import QFont, QPixmap, QTextCursor
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QTextBrowser, QSizePolicy, QSizeGrip,
@@ -20,6 +20,8 @@ import art_cache
 class OverlaySignals(QObject):
     state_updated = Signal(dict)
     advice_updated = Signal(str)
+    advice_started = Signal()
+    advice_chunk = Signal(str)
     status_updated = Signal(str)
     art_ready = Signal(str)
 
@@ -146,6 +148,8 @@ class Overlay(QWidget):
         self._recommended = set()  # номера слотов магазина из совета
         self.signals.state_updated.connect(self._on_state)
         self.signals.advice_updated.connect(self._on_advice)
+        self.signals.advice_started.connect(self._on_advice_started)
+        self.signals.advice_chunk.connect(self._on_advice_chunk)
         self.signals.status_updated.connect(self.lbl_status.setText)
         self.signals.art_ready.connect(lambda _cid: self._render_lists())
         art_cache.add_listener(self.signals.art_ready.emit)
@@ -178,6 +182,13 @@ class Overlay(QWidget):
             w = item.widget()
             if w is not None:
                 w.deleteLater()
+
+    def _on_advice_started(self):
+        self.advice.clear()
+
+    def _on_advice_chunk(self, tok: str):
+        self.advice.moveCursor(QTextCursor.MoveOperation.End)
+        self.advice.insertPlainText(tok)
 
     def _on_advice(self, text: str):
         self.advice.setPlainText(text)

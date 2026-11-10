@@ -8,3 +8,6 @@ art/
 _shot.png
 _overlay_test.png
 _screenshot_small.jpg
+
+# накопленный датасет «снапшот → совет» (не для репозитория)
+dataset/

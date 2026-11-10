@@ -5,6 +5,8 @@
   "player_name": "auto",
   "language": "ru",
   "auto_advice": true,
+  "history_turns": 4,
+  "dataset_log": true,
   "tavern_upgrade_costs": {"2": 4, "3": 5, "4": 7, "5": 8, "6": 9},
   "hydrate_mb": 0,
   "advice_on": ["shop_refresh", "recruit_start"],

@@ -182,11 +182,17 @@ def main() -> int:
     print("holdout:", holdout_acc(model, hold, tok, device))
 
     os.makedirs(CKPT_DIR, exist_ok=True)
-    heads_sd = {k: v for k, v in model.state_dict().items()
-                if not k.startswith("base.")}
-    torch.save(heads_sd, os.path.join(CKPT_DIR, "model.pt"))
-    print(f"-> {os.path.join(CKPT_DIR, 'model.pt')} (только головы, "
-          f"{len(heads_sd)} тензоров)")
+    # головы + (если разморожен) хвост энкодера — иначе дообучение хвоста
+    # выбрасывается при сохранении
+    trainable = {n for n, p in model.named_parameters() if p.requires_grad}
+    keep = {n for n, _ in model.named_parameters()
+            if not n.startswith("base.") or n in trainable}
+    keep |= {n for n, _ in model.named_buffers()}
+    sd = {k: v for k, v in model.state_dict().items() if k in keep}
+    torch.save(sd, os.path.join(CKPT_DIR, "model.pt"))
+    print(f"-> {os.path.join(CKPT_DIR, 'model.pt')} "
+          f"({len(sd)} тензоров, "
+          f"{sum(1 for k in sd if k.startswith('base.'))} из энкодера)")
     return 0
 
 

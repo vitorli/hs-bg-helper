@@ -49,8 +49,12 @@ DIRTY_TAGS = {
     "ZONE", "ZONE_POSITION", "CONTROLLER", "ATK", "HEALTH", "DAMAGE", "ARMOR",
     "TECH_LEVEL", "CARDTYPE", "CARDRACE", "RESOURCES", "RESOURCES_USED",
     "PLAYER_TECH_LEVEL", "TURN", "BACON_CURRENT_COMBAT_PLAYER_ID", "HERO_ENTITY",
-    "HAS_DRAG_TO_BUY",
+    "HAS_DRAG_TO_BUY", "FROZEN", "NEXT_OPPONENT_PLAYER_ID",
 }
+
+# бармен и служебные «герои» — не герои игроков
+BARTENDER_IDS = {"TB_BaconShopBob", "TB_BaconShop_HERO_PH",
+                 "TB_BaconShop_HERO_KelThuzad"}
 
 
 class Entity:
@@ -100,6 +104,10 @@ class GameState:
         self._name_to_eid = {}      # имя -> EntityID (кэш)
         self._ctx = None            # Entity | dict | None — контекст bare-тегов
         self._ctx_entity = None     # Entity, которой принадлежит _ctx (если есть)
+        # данные уровня матча (сбрасываются каждую партию)
+        self.tribes_seen = set()    # CARDRACE существ, попадавшихся в магазине
+        self.last_combat = None     # сводка последнего боя (см. snapshot)
+        self._combat_captured = False  # сводку боя берём с ПЕРВОГО снапшота боя
         self._dirty = True
 
     # ---------- разбор строк ----------
@@ -318,14 +326,28 @@ class GameState:
             "kind": "spell" if ent.get("CARDTYPE") in SPELL_CARDTYPES else "minion",
         }
 
+    def _hero_info_for_pid(self, pid: int) -> dict | None:
+        """Герой игрока (имя, тир, HP) по его PlayerID — по сущности героя в PLAY."""
+        if not pid:
+            return None
+        for ent in self.entities.values():
+            if (ent.get("CARDTYPE") in HERO_CARDTYPES and ent.zone == "PLAY"
+                    and ent.controller == pid
+                    and ent.card_id not in BARTENDER_IDS):
+                return {
+                    "name": ent.name or self.card_names.get(ent.card_id, ent.card_id),
+                    "tier": _to_int(ent.get("PLAYER_TECH_LEVEL")),
+                    "health": _to_int(ent.get("HEALTH")) - _to_int(ent.get("DAMAGE")),
+                    "armor": _to_int(ent.get("ARMOR")),
+                }
+        return None
+
     def snapshot(self) -> dict:
         tags = self._local_tags()
         gold = _to_int(tags.get("RESOURCES")) - _to_int(tags.get("RESOURCES_USED"))
         tier = _to_int(tags.get("PLAYER_TECH_LEVEL"))
         turn = _to_int(tags.get("TURN")) or _to_int(self.game_tags.get("TURN"))
-
-        BARTENDER_IDS = {"TB_BaconShopBob", "TB_BaconShop_HERO_PH",
-                         "TB_BaconShop_HERO_KelThuzad"}
+        phase = self.phase
 
         def _valid_hero(ent) -> bool:
             return (ent is not None and ent.card_id not in BARTENDER_IDS
@@ -374,6 +396,16 @@ class GameState:
         board.sort(key=lambda e: e.zone_pos)
         shop.sort(key=lambda e: e.zone_pos)
 
+        # заморозка: FROZEN=1 на любой видимой карте магазина
+        shop_frozen = any(e.get("FROZEN") == "1" for e in shop)
+        # племена, точно присутствующие в пуле партии (попадались в магазине).
+        # Полный пул в Power.log не передаётся — это позитивные наблюдения.
+        if phase == "recruit":
+            for e in shop:
+                t = e.get("CARDRACE")
+                if t and t not in ("0", "ALL"):
+                    self.tribes_seen.add(t)
+
         hero_name = ""
         health = armor = 0
         if hero:
@@ -385,9 +417,45 @@ class GameState:
             if hero_tier:
                 tier = hero_tier
 
+        # следующий противник (фаза закупки): NEXT_OPPONENT_PLAYER_ID на игроке
+        next_opponent = None
+        if phase == "recruit":
+            nxt = _to_int(tags.get("NEXT_OPPONENT_PLAYER_ID", 0))
+            if nxt and nxt != self.local_pid:
+                next_opponent = self._hero_info_for_pid(nxt)
+
+        # сводка боя: во время боя доска противника материализуется в зоне PLAY
+        # под контроллером Боба (bob_pid) — запоминаем её для совета.
+        # Примечание: в дуосах этот слот используется и для доски противника
+        # тиммейта — для оценки силы команды соперника это тоже полезно.
+        if phase == "combat" and self.bob_pid:
+            opp_minions = [e for e in self.entities.values()
+                           if e.zone == "PLAY" and e.controller == self.bob_pid
+                           and e.get("CARDTYPE") in MINION_CARDTYPES
+                           and e.get("HAS_DRAG_TO_BUY") != "1"
+                           and not e.name.startswith("UNKNOWN ENTITY")]
+            # берём сводку с первого снапшота боя: позже миньоны уже изранены
+            if opp_minions and not self._combat_captured:
+                self._combat_captured = True
+                tribes: dict[str, int] = {}
+                atk = hp = 0
+                for e in opp_minions:
+                    t = e.get("CARDRACE") or "0"
+                    tribes[t] = tribes.get(t, 0) + 1
+                    atk += _to_int(e.get("ATK"))
+                    hp += _to_int(e.get("HEALTH")) - _to_int(e.get("DAMAGE"))
+                self.last_combat = {
+                    "board_size": len(opp_minions),
+                    "tribes": tribes,
+                    "total_atk": atk,
+                    "total_hp": hp,
+                }
+        else:
+            self._combat_captured = False
+
         return {
             "turn": turn,
-            "phase": self.phase,
+            "phase": phase,
             "gold": gold,
             "tier": tier,
             "hero": hero_name,
@@ -397,6 +465,10 @@ class GameState:
             "shop": [self._minion_info(e) for e in shop],
             "board": [self._minion_info(e) for e in board],
             "hand": [self._minion_info(e) for e in hand],
+            "shop_frozen": shop_frozen,
+            "tribes_seen": sorted(self.tribes_seen),
+            "next_opponent": next_opponent,
+            "last_combat": self.last_combat,
         }
 
 
@@ -426,7 +498,8 @@ class LogWatcher(threading.Thread):
 
     def _state_key(self, snap: dict):
         shop_ids = tuple(sorted(m["card_id"] for m in snap["shop"]))
-        return (snap["turn"], snap["phase"], snap["gold"], snap["tier"], shop_ids)
+        return (snap["turn"], snap["phase"], snap["gold"], snap["tier"],
+                shop_ids, snap["shop_frozen"])
 
     def _open_and_hydrate(self, log_path: str):
         """Открывает лог и прогоняет хвост файла через парсер, чтобы

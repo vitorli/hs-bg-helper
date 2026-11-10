@@ -226,7 +226,8 @@ class Overlay(QWidget):
         self._clear_box(self.board_box)
 
         shop = snap.get("shop", [])
-        hdr = QLabel("🛒 Магазин Боба:" if shop else "🛒 Магазин: —")
+        hdr = QLabel("🛒 Магазин Боба:" + (" ❄ заморожен" if snap.get("shop_frozen") else "")
+                     if shop else "🛒 Магазин: —")
         hdr.setObjectName("section")
         self.shop_box.addWidget(hdr)
         for i, m in enumerate(shop, 1):

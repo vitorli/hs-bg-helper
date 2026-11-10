@@ -79,6 +79,10 @@ def main():
         print(f"\n{section.upper()} ({len(snap[section])}):")
         for m in snap[section]:
             print("  ", m)
+    print(f"\nshop_frozen: {snap['shop_frozen']}")
+    print("tribes_seen:", snap["tribes_seen"])
+    print("next_opponent:", snap["next_opponent"])
+    print("last_combat:", snap["last_combat"])
     print(f"\nИзвестных cardId: {len(state.card_names)}")
 
 

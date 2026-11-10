@@ -17,11 +17,23 @@ TRIBE_RU = {
     "DEMON": "Демон",
     "MURLOC": "Мурлок",
     "MECH": "Механизм",
+    "MECHANICAL": "Механизм",
     "BEAST": "Зверь",
     "UNDEAD": "Нежить",
     "NAGA": "Нага",
     "ALL": "Все племена",
 }
+
+# CARDRACE иногда приходит числом (enum CardRace) — те же племена
+RACE_NUM_RU = {
+    "14": "Мурлок", "15": "Демон", "17": "Механизм", "18": "Элементаль",
+    "20": "Зверь", "23": "Пират", "24": "Дракон", "26": "Все племена",
+    "40": "Нежить", "43": "Свинобраз", "92": "Нага",
+}
+
+
+def _tribe_ru(tribe: str) -> str:
+    return TRIBE_RU.get(tribe) or RACE_NUM_RU.get(str(tribe), tribe or "")
 
 TAVERN_MAX_TIER = 6
 # Стоимость повышения таверны до тира (2→6), золота. Можно переопределить
@@ -50,6 +62,12 @@ SYSTEM_PROMPT_RU = (
     "не советуй апнуть таверну, если после апа не останется золота на покупку и доска слабее магазина; "
     "два одинаковых существа — приоритет: триплет делает золотое существо и открывает существо на тир выше; "
     "не советуй покупать существо, которое слабее любого на доске и не усиливает синергию племени. "
+    "Заморозка и темп: если магазин заморожен, слоты останутся — учитывай это в плане на 1-2 хода; "
+    "«заморозить на будущее» — нормальный совет, когда золото лучше сэкономить, "
+    "а слот сильный и будет доступен на следующем ходу. "
+    "Противники: если следующий противник сильнее тебя (тир выше, HP в порядке) или прошлый бой "
+    "показал доску противника заметно больше твоей по статам — сдвигай приоритет к немедленной силе "
+    "доски вместо долгосрочных планов и апов; если ты сильнее — смелее апай и вкладывайся в скейлинг. "
     "Не выдумывай карты, которых нет в состоянии или справке. Если данных мало — скажи об этом честно. "
     "ФОРМАТ ОТВЕТА — ЖЁСТКО: ровно четыре пункта, каждый одной строкой:\n"
     "1) КУПИТЬ: ...\n2) СБОРКА: ...\n3) ПОЧЕМУ: ...\n4) ДАЛЬШЕ: ...\n"
@@ -77,7 +95,7 @@ def _fmt_minion(m: dict, card_db: dict | None = None,
     if m.get("kind") == "spell":
         parts.append("[заклинание]")
     else:
-        tribe = TRIBE_RU.get(m.get("tribe", ""), m.get("tribe") or "")
+        tribe = _tribe_ru(m.get("tribe", ""))
         if tribe and tribe != "0":
             parts.append(f"[{tribe}]")
         if m.get("golden"):
@@ -137,6 +155,39 @@ def build_prompt(snapshot: dict, db: dict) -> str:
         f"Таверна: тир {snapshot.get('tier', '?')} | Золото: {snapshot.get('gold', '?')}"
     )
 
+    if snapshot.get("shop_frozen"):
+        lines.append("МАГАЗИН ЗАМОРОЖЕН: текущие слоты останутся на следующий ход. "
+                     "Учитывай это: можно оставить золото на потом или купить только лучшее.")
+
+    tribes_seen = snapshot.get("tribes_seen") or []
+    if tribes_seen:
+        names = [t for t in (_tribe_ru(x) for x in tribes_seen) if t and t != "Все племена"]
+        if names:
+            lines.append("Племена, ТОЧНО есть в пуле партии (попадались в магазине): "
+                         + ", ".join(names)
+                         + ". Не совети племена вне этого списка, доски и магазина.")
+
+    nxt = snapshot.get("next_opponent")
+    if nxt:
+        lines.append(
+            f"СЛЕДУЮЩИЙ ПРОТИВНИК: {nxt.get('name') or 'неизвестен'} — "
+            f"тир {nxt.get('tier', '?')}, {nxt.get('health', '?')}+{nxt.get('armor', 0)} HP."
+        )
+
+    lc = snapshot.get("last_combat")
+    if lc:
+        parts = [f"{lc.get('board_size', '?')} существ",
+                 f"суммарно {lc.get('total_atk', '?')}/{lc.get('total_hp', '?')}"]
+        lt = [_tribe_ru(t) for t in (lc.get("tribes") or {})]
+        lt = [t for t in lt if t and t not in ("Все племена", "0")]
+        if lt:
+            parts.append("племена: " + ", ".join(lt))
+        hero_txt = ""
+        if lc.get("hero"):
+            h = lc["hero"]
+            hero_txt = f" против {h.get('name')} (тир {h.get('tier', '?')})"
+        lines.append(f"ПРОШЛЫЙ БОЙ{hero_txt}: " + "; ".join(parts) + ".")
+
     minion_db = db.get("minions", {})
     texts_by_name = db.get("texts_by_name_ru", {})
 
@@ -153,7 +204,7 @@ def build_prompt(snapshot: dict, db: dict) -> str:
         # сводка по племенам доски — чтобы модель видела, что УЖЕ собрано
         tribes = {}
         for m in board:
-            t = TRIBE_RU.get(m.get("tribe", ""), m.get("tribe") or "без племени")
+            t = _tribe_ru(m.get("tribe", "")) or "без племени"
             if t == "0":
                 t = "без племени"
             tribes[t] = tribes.get(t, 0) + 1

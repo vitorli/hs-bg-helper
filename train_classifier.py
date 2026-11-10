@@ -134,6 +134,8 @@ def main() -> int:
     ap.add_argument("--lr", type=float, default=1e-3)
     ap.add_argument("--batch", type=int, default=8)
     ap.add_argument("--seed", type=int, default=42)
+    ap.add_argument("--unfreeze", type=int, default=0,
+                    help="разморозить последние N слоёв энкодера (0 = только головы)")
     args = ap.parse_args()
 
     if not os.path.exists(TRAIN_PATH):
@@ -149,11 +151,29 @@ def main() -> int:
     model, tok, device = build_model(LAYA_REPO)
     for p in model.base.parameters():
         p.requires_grad = False
+    if args.unfreeze > 0:
+        # тонкая настройка хвоста энкодера: данных мало, но задача специфична
+        layers = getattr(model.base, "layers", None)
+        if layers is not None:
+            for layer in layers[-args.unfreeze:]:
+                for p in layer.parameters():
+                    p.requires_grad = True
+        norm = getattr(model.base, "final_norm", None)
+        if norm is not None:
+            for p in norm.parameters():
+                p.requires_grad = True
+        print(f"разморожено последних слоёв энкодера: {args.unfreeze}")
 
     ds = BGDataset(train, tok)
     loader = DataLoader(ds, batch_size=args.batch, shuffle=True, collate_fn=collate)
-    opt = torch.optim.AdamW(
-        [p for p in model.parameters() if p.requires_grad], lr=args.lr)
+    enc_params = [p for n, p in model.named_parameters()
+                  if p.requires_grad and n.startswith("base.")]
+    head_params = [p for n, p in model.named_parameters()
+                   if p.requires_grad and not n.startswith("base.")]
+    groups = [{"params": head_params, "lr": args.lr}]
+    if enc_params:
+        groups.append({"params": enc_params, "lr": args.lr * 0.1})
+    opt = torch.optim.AdamW(groups)
 
     for ep in range(1, args.epochs + 1):
         loss = run_epoch(model, loader, device, opt)

@@ -69,29 +69,43 @@ def main():
 
     def fast_advice(snap: dict, hist_txt: str):
         """Каскад, шаг 1: мгновенный совет классификатора при высокой
-        уверенности. Возвращает (текст, уверенность) или None."""
+        уверенности. Жёсткие проверки осуществимости: классификатор не знает
+        цен — их проверяем явно (золото, стоимость апа, остаток на реролл).
+        Возвращает (текст, уверенность) или None."""
         clf = clf_holder["clf"]
         if clf is None:
             return None
         text = encode_text(snap, history=hist_txt)
         p = clf.predict(text, shop_size=len(snap.get("shop", [])))
+        gold = snap.get("gold", 0) or 0
+        tier = snap.get("tier", 1) or 1
         buy, buy_conf = p["buy"]
         comp, comp_conf = p["comp"]
         if buy_conf < clf_conf:
             return None
+        # покупка недоступна по золоту -> классификатор обязан сказать «ничего»
+        if gold < 3:
+            buy = 0
+        up, up_conf = p["upgrade"]
+        rr, rr_conf = p["reroll"]
+        fr, fr_conf = p["freeze"]
+        up_cost = advisor.upgrade_costs.get(tier + 1, 0)
         lines = ["⚡ Быстрый совет (классификатор):"]
         if buy:
             name = snap["shop"][buy - 1]["name"] if buy <= len(snap.get("shop", [])) else f"слот №{buy}"
             lines.append(f"1) КУПИТЬ: слот №{buy} — {name}.")
+            gold -= 3
         else:
             lines.append("1) КУПИТЬ: ничего.")
-        if p["upgrade"][0] == 1:
-            lines.append("2) Апнуть таверну.")
-        if p["reroll"][0] == 1:
+        if (up == 1 and up_conf >= clf_conf and tier < 6
+                and gold >= up_cost):
+            lines.append(f"2) Апнуть таверну (до тира {tier + 1} за {up_cost} з.).")
+            gold -= up_cost
+        if rr == 1 and rr_conf >= clf_conf and gold >= 1:
             lines.append("3) Рероллить остаток золота.")
-        if p["freeze"][0] == 1:
+        if fr == 1 and fr_conf >= clf_conf:
             lines.append("4) Заморозить магазин.")
-        if comp:
+        if comp and comp_conf >= clf_conf:
             lines.append(f"Сборка: {COMP_CLASSES[comp]}.")
         lines.append(f"(уверенность {buy_conf:.2f}; 💡 Совет — глубокий разбор LLM)")
         return "\n".join(lines), buy_conf

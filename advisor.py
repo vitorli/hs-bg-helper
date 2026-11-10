@@ -346,6 +346,12 @@ class OllamaAdvisor:
         """Жёсткие ошибки, после которых ответ надо перегенерировать."""
         errors = []
         low = text.lower()
+        # «ап/реролл на следующий ход» — план, не трата золота СЕЙЧАС:
+        # в арифметике текущего хода такие упоминания не учитываем
+        # (в ДАЛЬШЕ мы сами просим модель так писать)
+        now = re.sub(r"(?:\bап\w*|реролл\w*|перекрут\w*)[^.;\n]{0,30}"
+                     r"(?:на\s+следующ\w*\s*ход\w*|на\s+будущ\w*|потом|позже|через\s+ход)",
+                     " ", low)
         tier = snapshot.get("tier", 1)
         gold = snapshot.get("gold", 0)
 
@@ -381,12 +387,12 @@ class OllamaAdvisor:
                 slots.clear()
 
             rerolls = 0
-            for m in re.finditer(r"реролл", low):
-                if not re.search(r"не\s+реролл|без\s+реролл", low[max(0, m.start() - 10):m.end()]):
+            for m in re.finditer(r"реролл", now):
+                if not re.search(r"не\s+реролл|без\s+реролл", now[max(0, m.start() - 10):m.end()]):
                     rerolls += 1
 
             wants_upgrade = bool(re.search(
-                r"\bап\b|апнуть|апгрейд|повысить\s+таверн|поднять\s+таверн", low))
+                r"\bап\b|апнуть|апгрейд|повысить\s+таверн|поднять\s+таверн", now))
 
             cost = 3 * len(slots)
             parts = []

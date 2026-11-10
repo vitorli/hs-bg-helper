@@ -37,8 +37,11 @@ def load_config() -> dict:
         return json.load(f)
 
 
-def collect_snapshots(path: str, every_lines: int = 400):
-    """Прогоняет лог, возвращает уникальные снапшоты закупки с полным магазином."""
+def collect_snapshots(path: str, every_lines: int = 400, min_gold: int = 3):
+    """Прогоняет лог, возвращает уникальные снапшоты закупки с полным магазином.
+
+    min_gold отсекает состояния «золото уже потрачено»: решать там нечего,
+    и LLM советует невозможную покупку — мусорная разметка."""
     state, history = GameState(), MatchHistory()
     seen = set()
     out = []
@@ -50,6 +53,8 @@ def collect_snapshots(path: str, every_lines: int = 400):
             snap = state.snapshot()
             history.update(snap)
             if snap.get("phase") != "recruit" or len(snap.get("shop", [])) < 3:
+                continue
+            if (snap.get("gold") or 0) < min_gold:
                 continue
             key = (snap.get("hero"), snap.get("turn"), snap.get("tier"),
                    snap.get("gold"),
@@ -76,6 +81,8 @@ def main() -> int:
                     help="ограничить число снапшотов с лога (0 = без лимита)")
     ap.add_argument("--every-lines", type=int, default=400,
                     help="как часто опрашивать состояние (строк лога)")
+    ap.add_argument("--min-gold", type=int, default=3,
+                    help="минимум золота в снапшоте (0 — не фильтровать)")
     args = ap.parse_args()
 
     config = load_config()
@@ -112,9 +119,12 @@ def main() -> int:
     t0 = time.time()
     with open(OUT_PATH, "a", encoding="utf-8") as out:
         for path in logs:
-            items = collect_snapshots(path, every_lines=args.every_lines)
-            if args.max_per_log:
-                items = items[:args.max_per_log]
+            items = collect_snapshots(path, every_lines=args.every_lines,
+                                      min_gold=args.min_gold)
+            if args.max_per_log and len(items) > args.max_per_log:
+                # равномерная выборка по всему логу, а не первые N
+                stride = len(items) / args.max_per_log
+                items = [items[int(i * stride)] for i in range(args.max_per_log)]
             print(f"{os.path.basename(os.path.dirname(path))}: {len(items)} снапшотов")
             for item in items:
                 total += 1

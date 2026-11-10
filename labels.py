@@ -138,6 +138,8 @@ def main() -> int:
                 rec = json.loads(ln)
             except ValueError:
                 continue
+            if rec.get("source") == "classifier":
+                continue  # саморазметка классификатора — шум, не учим на ней
             n += 1
             labels = extract_labels(rec)
             if labels is None:

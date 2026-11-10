@@ -21,6 +21,15 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
 DB_PATH = os.path.join(BASE_DIR, "bg_db.json")
 
+# каскад «классификатор -> LLM» — импорты опциональны: без них советчик
+# работает в режиме LLM, как раньше
+try:
+    from classifier import BGClassifier, COMP_CLASSES
+    from features import encode_text
+    _CLF_AVAILABLE = True
+except Exception:
+    _CLF_AVAILABLE = False
+
 
 def load_config() -> dict:
     with open(CONFIG_PATH, "r", encoding="utf-8") as f:
@@ -41,6 +50,51 @@ def main():
     overlay.show()
 
     history = MatchHistory(max_turns=config.get("history_turns", 4))
+
+    # классификатор грузим в фоне: инициализация энкодера ~полминуты,
+    # оверлей и лог-наблюдатель работают сразу
+    clf_holder = {"clf": None}
+    clf_conf = config.get("clf_threshold", 0.6)
+
+    def _load_clf():
+        if not (_CLF_AVAILABLE and config.get("fast_mode", True)):
+            return
+        try:
+            clf_holder["clf"] = BGClassifier(os.path.join(
+                BASE_DIR, config.get("clf_path", "checkpoints/bg_clf")))
+        except Exception as e:
+            overlay.signals.status_updated.emit(f"Классификатор недоступен: {e}")
+
+    threading.Thread(target=_load_clf, daemon=True).start()
+
+    def fast_advice(snap: dict, hist_txt: str):
+        """Каскад, шаг 1: мгновенный совет классификатора при высокой
+        уверенности. Возвращает (текст, уверенность) или None."""
+        clf = clf_holder["clf"]
+        if clf is None:
+            return None
+        text = encode_text(snap, history=hist_txt)
+        p = clf.predict(text, shop_size=len(snap.get("shop", [])))
+        buy, buy_conf = p["buy"]
+        comp, comp_conf = p["comp"]
+        if buy_conf < clf_conf:
+            return None
+        lines = ["⚡ Быстрый совет (классификатор):"]
+        if buy:
+            name = snap["shop"][buy - 1]["name"] if buy <= len(snap.get("shop", [])) else f"слот №{buy}"
+            lines.append(f"1) КУПИТЬ: слот №{buy} — {name}.")
+        else:
+            lines.append("1) КУПИТЬ: ничего.")
+        if p["upgrade"][0] == 1:
+            lines.append("2) Апнуть таверну.")
+        if p["reroll"][0] == 1:
+            lines.append("3) Рероллить остаток золота.")
+        if p["freeze"][0] == 1:
+            lines.append("4) Заморозить магазин.")
+        if comp:
+            lines.append(f"Сборка: {COMP_CLASSES[comp]}.")
+        lines.append(f"(уверенность {buy_conf:.2f}; 💡 Совет — глубокий разбор LLM)")
+        return "\n".join(lines), buy_conf
 
     # датасет «снапшот → совет» для будущей дистилляции в классификатор
     dataset_lock = threading.Lock()
@@ -91,6 +145,24 @@ def main():
             overlay.signals.status_updated.emit(
                 ("Авто-совет… " if auto else "Думаю… ") + f"({config['model']})"
             )
+            hist_txt = history.summary()
+            # каскад: сначала классификатор (~0.1 с), LLM — если неуверенен
+            try:
+                fast = fast_advice(snap, hist_txt)
+            except Exception:
+                fast = None
+            if fast:
+                text, conf = fast
+                last_advice["key"] = key
+                last_advice["text"] = text
+                overlay.signals.advice_updated.emit(text)
+                overlay.signals.status_updated.emit(
+                    f"⚡ классификатор, уверенность {conf:.2f}")
+                busy["flag"] = False
+                log_dataset("advice.jsonl",
+                            {"snapshot": snap, "history": hist_txt,
+                             "advice": text, "source": "classifier"})
+                return
             overlay.signals.advice_started.emit()
             try:
                 text = advisor.advise(
@@ -101,7 +173,8 @@ def main():
                 last_advice["text"] = text
                 overlay.signals.advice_updated.emit(text)
                 overlay.signals.status_updated.emit("")
-                log_dataset("advice.jsonl", {"snapshot": snap, "advice": text})
+                log_dataset("advice.jsonl", {"snapshot": snap, "history": hist_txt,
+                                             "advice": text, "source": "llm"})
             except Exception as e:
                 overlay.signals.status_updated.emit(f"Ошибка Ollama: {e}")
             finally:
